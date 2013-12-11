@@ -36,8 +36,8 @@
   * @details
   * Para un espacio fisico de maximo 4 GB, se requiere un mapa de bits
   * de 128 KB. Si cada entrada ocupa 4 bytes, se requiere 32678 entradas.
-  *@verbatim
-  * ~(0x0) / (MEMORY_UNIT_SIZE * BITS_PER_ENTRY)
+  * @verbatim
+   ~(0x0) / (MEMORY_UNIT_SIZE * BITS_PER_ENTRY)
        |                |               |
        |                |               |_ _ bits que tiene cada entrada
        |                |                     en la tabla.
@@ -46,8 +46,8 @@
 	  pone los 32 bits en 1. Esto representa el maximo
 	  numero que se puede guardar
 	  en un registro del procesador (4GB - 1).
-  *@endverbatim
-  *
+  @endverbatim
+
   *Esto nos permite saber el total de elementos que tiene la tabla.
   */
 unsigned int memory_bitmap_length =
@@ -66,6 +66,15 @@ unsigned int allowed_free_start;
 /**
  * @brief Esta rutina inicializa el mapa de bits de memoria,
  * a partir de la informacion obtenida del GRUB.
+ * para esto limpia el mapa de bits, es decir coloca todos los
+ * bits en 0.
+ * luego se asigna la minima direccion de memoria que se puede liberar
+ * (la direccion lineal donde termina el kernel). Se verifica si los campos
+ * mmap_length y mmap_addr son validos (si flags[6] = 1).
+ * inmediatamente verifica si la rgion de memoria son validas y extrae
+ * la region de memoria mas grande disponible siempre y cuando su direccion
+ * base sea mayor o igual a la posicion del kernel.
+ * se establece esta memoria como disponible para liberar memoria.
  */
 void setup_memory(void){
 
@@ -271,7 +280,27 @@ void setup_memory(void){
 
 /** @brief Permite verificar si la unidad se encuentra disponible.
  * @param unit unidad a verificar
- * @return int que es la direccion en donde empieza la unidad dememoria
+ * @return int que es la direccion en donde empieza la unidad de memoria
+ *
+ * @verbatim
+   Ejemplo
+   unit = 1000000 (bytes)
+   entry= 1000000/ 32 (bytes) =31250 (bytes)
+   offset= 1000000 % 32 =0
+   retorna memory_bitmap[31250] & 0x1 << 0
+   si retorna un 1 significa que la unidad se encuentra libre
+   si retorna 0 significa que la unidad se encuentra ocupada.
+
+                        ....   1    0
+                  ---------------------
+31250 --------->  |   |   |   |   | x |  <---------- x = bit a verificar
+                  ---------------------
+                  |   |   |   |   |   |
+                  ---------------------
+                            ....
+
+
+  @endverbatim
  */
 static __inline__ int test_unit(unsigned int unit) {
 	 volatile entry = unit / BITS_PER_ENTRY;
@@ -281,7 +310,28 @@ static __inline__ int test_unit(unsigned int unit) {
 
 
 /** @brief  Permite marcar la unidad como ocupada.
- * @param unit unidad a verificar*/
+ * @param unit unidad a verificar
+*@verbatim
+   Ejemplo:
+   unit= 1000000 (bytes)
+   entry = 1000000/32 = 31250 (bytes)
+   offset = 1000000 % 32 = 0
+   memory_bitmap[31250] &= ~(0x1 << 0)
+   esto quiere decir que la unidad 1000000 que se va a marcar como ocupada (0)
+   se encuentra ubicada dentro del mapa de bits en la region 31250 en el bit 0
+   en esa region tal como se muestra en la siguiente figura
+
+               ....
+    -------------------------
+    | 1 | 1 | 1 | 1 | 1 | 1 |
+    -------------------------
+    | 1 | 1 | 1 | 1 | 1 | 0 | <----- bit 0 de la posicion 31250
+    -------------------------            de memory_bitmap
+    | 1 | 1 | 1 | 1 | 1 | 1 |
+    -------------------------
+               .....
+    @endverbatim
+   */
 static __inline__ void clear_unit(unsigned int unit) {
 	 volatile entry = unit / BITS_PER_ENTRY;
 	 volatile offset = unit % BITS_PER_ENTRY;
@@ -289,7 +339,34 @@ static __inline__ void clear_unit(unsigned int unit) {
 }
 
 /** @brief Permite marcar la unidad como libre.
- *@param unit unidad a verificar*/
+ *@param unit unidad a verificar
+ @verbatim
+   Ejemplo:
+   unit= 335000 (bytes)
+   entry = 335000/32 = 10468 (bytes)
+   offset = 335000 % 32 = 24
+   memory_bitmap[10468] &= ~(0x1 << 24)
+   esto quiere decir que la unidad 335000 que se va a marcar como libre (1)
+   se encuentra ubicada dentro del mapa de bits en la region 10468 en el bit 24
+   en esa region tal como se muestra en la siguiente figura.
+
+       bit 24 de la posicion 10468 de memory_bitmap
+              |
+              |
+              V  ....
+    ---------------------------
+    | 0 | 0 | 1|...| 0 | 0 | 0 |
+    ---------------------------
+    | 1 | 1 | 1|...| 1 | 1 | 1 |
+    ---------------------------
+    | 0 | 0 | 0|...| 0 | 0 | 0 |
+    ---------------------------
+    | 1 | 1 | 1|...| 1 | 1 | 1 |
+    ---------------------------
+               .....
+    @endverbatim
+
+  */
 static __inline__ void set_unit(unsigned int unit) {
 	 volatile entry = unit / BITS_PER_ENTRY;
 	 volatile offset = unit % BITS_PER_ENTRY;
@@ -300,6 +377,13 @@ static __inline__ void set_unit(unsigned int unit) {
 /**
  @brief Busca una unidad libre dentro del mapa de bits de memoria.
  * @return Dirección de inicio de la unidad en memoria.
+ * @verbatim
+   Al inicio de esta funcion se verifica si no existen unidades
+  libres lo cual retornaria 0. caso contrario Busca una unidad de memoria
+  disponible. si al hacer la busqueda no encuentra una unidad disponible
+  dentro del mapa de bits entonces retornara 0, caso contrario retorna
+  la direccion de inicio de la unidad de memoria.
+ @endverbatim
  */
   char * allocate_unit(void) {
 	 unsigned int unit; /**unit cuenta las unidades disponibles.*/
@@ -350,6 +434,13 @@ static __inline__ void set_unit(unsigned int unit) {
    * de memoria.
    * @param length Tamaño de la región de memoria a asignar.
    * @return Dirección de inicio de la región en memoria.
+   * @verbatim
+     Al inicio de esta funcion se verifica si no existen regiones
+     libres lo cual retornaria 0. caso contrario Busca una region de memoria que tenga
+     un tamaño mayor o igual a length disponible. si al hacer la busqueda no encuentra
+     una region disponible dentro del mapa de bits entonces retornara 0, caso contrario retorna
+     la direccion de inicio de la region de memoria.
+    @endverbatim
    */
   char * allocate_unit_region(unsigned int length) {
 	unsigned int unit;
@@ -414,7 +505,12 @@ static __inline__ void set_unit(unsigned int unit) {
 /**
  * @brief Permite liberar una unidad de memoria.
  * @param addr Dirección de memoria dentro del área a liberar.
- */
+ @verbatim
+  Verifica si la direccion que recibe es menor a la direccion del
+  kernel o no, de ser asi sale sin realizar ninguna accion, caso
+  contrario se convierte a una direccion lineal para posteriormente
+  colocarla en el mapa de bits como una unidad disponible.
+ @endverbatim*/
 void free_unit(char * addr) {
 	 unsigned int start;
 	 unsigned int entry;
@@ -442,7 +538,12 @@ void free_unit(char * addr) {
  * @brief Permite liberar una región de memoria.
  * @param start_addr Dirección de memoria del inicio de la región a liberar
  * @param length Tamaño de la región a liberar
- */
+  @verbatim
+  Verifica si la direccion que recibe es menor a la direccion del
+  kernel o no, de ser asi sale sin realizar ninguna accion, caso
+  contrario se convierte a una direccion lineal para posteriormente
+  colocarla en el mapa de bits como una region disponible.
+ @endverbatim*/
 void free_region(char * start_addr, unsigned int length) {
 	 unsigned int start;
 	 unsigned int end;
